@@ -148,6 +148,79 @@ VITE_API_BASE_URL=http://127.0.0.1:8000/api/v1
 VITE_MERCHANT_ID=<seeded-merchant-uuid>
 ```
 
+### Deployment
+
+The repository includes [render.yaml](/d:/Notes/All%20Materials/Playto_Pay_Assignment/render.yaml) for Render deployment.
+
+Recommended Render layout:
+
+- PostgreSQL database
+- Redis instance
+- Django web service
+- Celery worker service
+- Celery beat service
+- Static frontend service
+
+If deploying manually on Render:
+
+- Backend root directory: `backend`
+- Backend build command:
+
+```bash
+pip install -r requirements.txt && python manage.py migrate
+```
+
+- Backend start command:
+
+```bash
+gunicorn core.wsgi:application
+```
+
+- Celery worker start command:
+
+```bash
+celery -A core worker -l info
+```
+
+- Celery beat start command:
+
+```bash
+celery -A core beat -l info
+```
+
+- Frontend root directory: `frontend`
+- Frontend build command:
+
+```bash
+npm install && npm run build
+```
+
+- Frontend publish directory:
+
+```bash
+dist
+```
+
+Required environment variables for backend services:
+
+```bash
+DEBUG=False
+SECRET_KEY=<secure-random-value>
+ALLOWED_HOSTS=<your-render-backend-hostname>
+POSTGRES_DB=<render-postgres-database>
+POSTGRES_USER=<render-postgres-user>
+POSTGRES_PASSWORD=<render-postgres-password>
+POSTGRES_HOST=<render-postgres-host>
+POSTGRES_PORT=<render-postgres-port>
+REDIS_URL=<render-redis-connection-string>
+```
+
+Required frontend environment variable:
+
+```bash
+VITE_API_BASE_URL=https://<your-render-backend-hostname>/api/v1
+```
+
 ### Notes
 
 - All money is stored as `BigIntegerField` in paise.

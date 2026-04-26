@@ -1,0 +1,137 @@
+services:
+  - type: web
+    name: payout-engine-backend
+    env: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt && python manage.py migrate
+    startCommand: gunicorn core.wsgi:application
+    envVars:
+      - key: DEBUG
+        value: "False"
+      - key: SECRET_KEY
+        value: change-me-in-render
+      - key: ALLOWED_HOSTS
+        value: payout-engine-backend.onrender.com
+      - key: POSTGRES_DB
+        fromDatabase:
+          name: payout-engine-db
+          property: database
+      - key: POSTGRES_USER
+        fromDatabase:
+          name: payout-engine-db
+          property: user
+      - key: POSTGRES_PASSWORD
+        fromDatabase:
+          name: payout-engine-db
+          property: password
+      - key: POSTGRES_HOST
+        fromDatabase:
+          name: payout-engine-db
+          property: host
+      - key: POSTGRES_PORT
+        fromDatabase:
+          name: payout-engine-db
+          property: port
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: payout-engine-redis
+          property: connectionString
+
+  - type: worker
+    name: payout-engine-worker
+    env: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: celery -A core worker -l info
+    envVars:
+      - key: DEBUG
+        value: "False"
+      - key: SECRET_KEY
+        value: change-me-in-render
+      - key: ALLOWED_HOSTS
+        value: payout-engine-backend.onrender.com
+      - key: POSTGRES_DB
+        fromDatabase:
+          name: payout-engine-db
+          property: database
+      - key: POSTGRES_USER
+        fromDatabase:
+          name: payout-engine-db
+          property: user
+      - key: POSTGRES_PASSWORD
+        fromDatabase:
+          name: payout-engine-db
+          property: password
+      - key: POSTGRES_HOST
+        fromDatabase:
+          name: payout-engine-db
+          property: host
+      - key: POSTGRES_PORT
+        fromDatabase:
+          name: payout-engine-db
+          property: port
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: payout-engine-redis
+          property: connectionString
+
+  - type: worker
+    name: payout-engine-beat
+    env: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: celery -A core beat -l info
+    envVars:
+      - key: DEBUG
+        value: "False"
+      - key: SECRET_KEY
+        value: change-me-in-render
+      - key: ALLOWED_HOSTS
+        value: payout-engine-backend.onrender.com
+      - key: POSTGRES_DB
+        fromDatabase:
+          name: payout-engine-db
+          property: database
+      - key: POSTGRES_USER
+        fromDatabase:
+          name: payout-engine-db
+          property: user
+      - key: POSTGRES_PASSWORD
+        fromDatabase:
+          name: payout-engine-db
+          property: password
+      - key: POSTGRES_HOST
+        fromDatabase:
+          name: payout-engine-db
+          property: host
+      - key: POSTGRES_PORT
+        fromDatabase:
+          name: payout-engine-db
+          property: port
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: payout-engine-redis
+          property: connectionString
+
+  - type: web
+    name: payout-engine-frontend
+    env: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_BASE_URL
+        value: https://payout-engine-backend.onrender.com/api/v1
+
+  - type: redis
+    name: payout-engine-redis
+    ipAllowList: []
+    plan: free
+
+databases:
+  - name: payout-engine-db
+    databaseName: payout_engine
+    user: payout_engine_user
