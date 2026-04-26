@@ -1,4 +1,4 @@
-## Playto Pay Assignment
+## Payout Engine
 
 Minimal payout engine for merchants receiving INR payouts after international collections.
 
