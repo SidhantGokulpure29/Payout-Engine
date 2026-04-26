@@ -150,76 +150,103 @@ VITE_MERCHANT_ID=<seeded-merchant-uuid>
 
 ### Deployment
 
-The repository includes [render.yaml](/d:/Notes/All%20Materials/Playto_Pay_Assignment/render.yaml) for Render deployment.
+The repository includes [render.yaml](/d:/Notes/All%20Materials/Playto_Pay_Assignment/render.yaml) for Render, and the app is also ready for a straightforward multi-service Railway setup.
 
-Recommended Render layout:
+Recommended Railway layout:
 
-- PostgreSQL database
-- Redis instance
+- PostgreSQL service
+- Redis service
 - Django web service
 - Celery worker service
 - Celery beat service
-- Static frontend service
+- Frontend web service
 
-If deploying manually on Render:
+Backend service settings on Railway:
 
-- Backend root directory: `backend`
-- Backend build command:
+- Root directory: `backend`
+- Build command:
 
 ```bash
 pip install -r requirements.txt && python manage.py migrate
 ```
 
-- Backend start command:
+- Start command:
 
 ```bash
-gunicorn core.wsgi:application
+gunicorn core.wsgi:application --bind 0.0.0.0:$PORT
 ```
 
-- Celery worker start command:
+Worker service settings on Railway:
+
+- Root directory: `backend`
+- Build command:
+
+```bash
+pip install -r requirements.txt
+```
+
+- Start command:
 
 ```bash
 celery -A core worker -l info
 ```
 
-- Celery beat start command:
+Beat service settings on Railway:
+
+- Root directory: `backend`
+- Build command:
+
+```bash
+pip install -r requirements.txt
+```
+
+- Start command:
 
 ```bash
 celery -A core beat -l info
 ```
 
-- Frontend root directory: `frontend`
-- Frontend build command:
+Frontend service settings on Railway:
+
+- Root directory: `frontend`
+- Build command:
 
 ```bash
 npm install && npm run build
 ```
 
-- Frontend publish directory:
+- Start command:
 
 ```bash
-dist
+npm run start
 ```
 
-Required environment variables for backend services:
+Backend environment variables for Railway:
 
 ```bash
 DEBUG=False
 SECRET_KEY=<secure-random-value>
-ALLOWED_HOSTS=<your-render-backend-hostname>
-POSTGRES_DB=<render-postgres-database>
-POSTGRES_USER=<render-postgres-user>
-POSTGRES_PASSWORD=<render-postgres-password>
-POSTGRES_HOST=<render-postgres-host>
-POSTGRES_PORT=<render-postgres-port>
-REDIS_URL=<render-redis-connection-string>
+ALLOWED_HOSTS=<your-backend-domain>
+DATABASE_URL=<railway-postgres-database-url>
+REDIS_URL=<railway-redis-url>
+CORS_ALLOWED_ORIGINS=https://<your-frontend-domain>
+CSRF_TRUSTED_ORIGINS=https://<your-frontend-domain>
 ```
 
-Required frontend environment variable:
+Frontend environment variables for Railway:
 
 ```bash
-VITE_API_BASE_URL=https://<your-render-backend-hostname>/api/v1
+VITE_API_BASE_URL=https://<your-backend-domain>/api/v1
+VITE_MERCHANT_ID=<seeded-merchant-uuid>
 ```
+
+After the first backend deploy, seed sample data:
+
+```bash
+python manage.py seed_data
+```
+
+Then copy one merchant UUID from the Railway Django shell or admin into `VITE_MERCHANT_ID` for the frontend.
 
 ### Notes
 
