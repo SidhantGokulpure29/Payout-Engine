@@ -2,9 +2,12 @@ from dataclasses import dataclass
 from datetime import timedelta
 import hashlib
 import random
+import threading
+import time
 from uuid import UUID
 
 from django.conf import settings
+from django.db import close_old_connections
 from django.db import IntegrityError, transaction
 from django.db.models import BigIntegerField, Case, F, Sum, Value, When
 from django.db.models.functions import Coalesce
@@ -31,6 +34,9 @@ class InvalidBankAccountError(PayoutError):
 
 class PayoutNotProcessableError(PayoutError):
     pass
+
+
+BACKGROUND_SETTLEMENT_DELAY_SECONDS = 1.0
 
 
 @dataclass(frozen=True)
@@ -267,3 +273,89 @@ def mark_stuck_payout_ready_for_retry(*, payout_id: UUID) -> Payout:
             ]
         )
         return payout
+
+
+def _settle_processing_payout(payout_id: UUID):
+    outcome = choose_settlement_outcome()
+
+    if outcome == "success":
+        try:
+            complete_payout(payout_id=payout_id)
+        except (Payout.DoesNotExist, PayoutNotProcessableError):
+            return
+        return
+
+    if outcome == "failure":
+        try:
+            fail_payout(
+                payout_id=payout_id,
+                reason="Simulated bank settlement failure.",
+            )
+        except (Payout.DoesNotExist, PayoutNotProcessableError):
+            return
+
+
+def process_payout_inline(*, payout_id: UUID, increment_attempt: bool = True):
+    try:
+        mark_payout_processing(
+            payout_id=payout_id,
+            increment_attempt=increment_attempt,
+        )
+    except (Payout.DoesNotExist, PayoutNotProcessableError):
+        return
+
+    _settle_processing_payout(payout_id)
+
+
+def _run_background_processing(payout_id: UUID, increment_attempt: bool):
+    close_old_connections()
+    try:
+        time.sleep(BACKGROUND_SETTLEMENT_DELAY_SECONDS)
+        process_payout_inline(
+            payout_id=payout_id,
+            increment_attempt=increment_attempt,
+        )
+    finally:
+        close_old_connections()
+
+
+def trigger_background_payout_processing(
+    *,
+    payout_id: UUID,
+    increment_attempt: bool = True,
+):
+    thread = threading.Thread(
+        target=_run_background_processing,
+        args=(payout_id, increment_attempt),
+        daemon=True,
+    )
+    thread.start()
+
+
+def sweep_unprocessed_payouts():
+    pending_ids = list(
+        Payout.objects.filter(status=Payout.Status.PENDING).values_list("id", flat=True)
+    )
+    for payout_id in pending_ids:
+        trigger_background_payout_processing(payout_id=payout_id)
+
+    for payout in get_stuck_payouts():
+        if payout.attempt_count >= settings.PAYOUT_MAX_ATTEMPTS:
+            try:
+                fail_payout(
+                    payout_id=payout.id,
+                    reason="Payout failed after maximum retry attempts.",
+                )
+            except (Payout.DoesNotExist, PayoutNotProcessableError):
+                continue
+            continue
+
+        try:
+            mark_stuck_payout_ready_for_retry(payout_id=payout.id)
+        except (Payout.DoesNotExist, PayoutNotProcessableError):
+            continue
+
+        trigger_background_payout_processing(
+            payout_id=payout.id,
+            increment_attempt=True,
+        )

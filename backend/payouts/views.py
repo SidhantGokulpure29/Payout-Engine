@@ -1,6 +1,7 @@
 from uuid import UUID
 
 from django.shortcuts import get_object_or_404
+from django.db import transaction
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -20,6 +21,8 @@ from payouts.services import (
     PayoutError,
     create_payout_request,
     get_merchant_balance,
+    sweep_unprocessed_payouts,
+    trigger_background_payout_processing,
 )
 
 
@@ -29,6 +32,7 @@ def get_merchant_or_404(merchant_id: str) -> Merchant:
 
 class MerchantDashboardView(APIView):
     def get(self, request, merchant_id):
+        sweep_unprocessed_payouts()
         merchant = get_merchant_or_404(merchant_id)
         balance = get_merchant_balance(merchant.id)
         bank_accounts = BankAccount.objects.filter(merchant=merchant).order_by(
@@ -51,6 +55,7 @@ class MerchantDashboardView(APIView):
 
 class MerchantBalanceView(APIView):
     def get(self, request, merchant_id):
+        sweep_unprocessed_payouts()
         merchant = get_merchant_or_404(merchant_id)
         balance = get_merchant_balance(merchant.id)
         return Response(
@@ -64,6 +69,7 @@ class MerchantBalanceView(APIView):
 
 class MerchantLedgerView(APIView):
     def get(self, request, merchant_id):
+        sweep_unprocessed_payouts()
         merchant = get_merchant_or_404(merchant_id)
         entries = LedgerEntry.objects.filter(merchant=merchant).order_by("-created_at")
         return Response(
@@ -76,6 +82,7 @@ class MerchantLedgerView(APIView):
 
 class MerchantPayoutListView(APIView):
     def get(self, request, merchant_id):
+        sweep_unprocessed_payouts()
         merchant = get_merchant_or_404(merchant_id)
         payouts = Payout.objects.filter(merchant=merchant).order_by("-created_at")
         return Response(
@@ -143,6 +150,11 @@ class PayoutCreateView(APIView):
             return Response(
                 {"detail": str(exc)},
                 status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if created:
+            transaction.on_commit(
+                lambda: trigger_background_payout_processing(payout_id=payout.id)
             )
 
         response_status = (

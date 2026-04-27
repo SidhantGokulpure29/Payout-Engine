@@ -10,6 +10,8 @@ from payouts.services import (
     get_merchant_balance,
     mark_payout_processing,
     mark_stuck_payout_ready_for_retry,
+    process_payout_inline,
+    sweep_unprocessed_payouts,
 )
 
 
@@ -106,3 +108,34 @@ class PayoutServiceTests(TransactionTestCase):
         self.assertEqual(payout.attempt_count, 1)
         self.assertIsNone(payout.processing_started_at)
         self.assertEqual(payout.status, Payout.Status.PROCESSING)
+
+    def test_process_payout_inline_transitions_out_of_pending(self):
+        payout, _ = create_payout_request(
+            merchant_id=self.merchant.id,
+            bank_account_id=self.bank_account.id,
+            amount_paise=2_500,
+            idempotency_key=uuid4(),
+        )
+
+        process_payout_inline(payout_id=payout.id)
+        payout.refresh_from_db()
+
+        self.assertNotEqual(payout.status, Payout.Status.PENDING)
+        self.assertEqual(payout.attempt_count, 1)
+
+    def test_sweep_unprocessed_payouts_fails_exhausted_stuck_payout(self):
+        payout, _ = create_payout_request(
+            merchant_id=self.merchant.id,
+            bank_account_id=self.bank_account.id,
+            amount_paise=2_500,
+            idempotency_key=uuid4(),
+        )
+
+        mark_payout_processing(payout_id=payout.id)
+        payout.attempt_count = 3
+        payout.save(update_fields=["attempt_count", "updated_at"])
+
+        sweep_unprocessed_payouts()
+        payout.refresh_from_db()
+
+        self.assertEqual(payout.status, Payout.Status.FAILED)

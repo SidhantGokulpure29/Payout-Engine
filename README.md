@@ -150,15 +150,12 @@ VITE_MERCHANT_ID=<seeded-merchant-uuid>
 
 ### Deployment
 
-The repository includes [render.yaml](/d:/Notes/All%20Materials/Playto_Pay_Assignment/render.yaml) for Render, and the app is also ready for a straightforward multi-service Railway setup.
+The repository includes [render.yaml](/d:/Notes/All%20Materials/Playto_Pay_Assignment/render.yaml) for Render, and the app is also ready for a straightforward Railway deployment.
 
 Recommended Railway layout:
 
 - PostgreSQL service
-- Redis service
 - Django web service
-- Celery worker service
-- Celery beat service
 - Frontend web service
 
 Backend service settings on Railway:
@@ -174,36 +171,6 @@ pip install -r requirements.txt && python manage.py migrate
 
 ```bash
 gunicorn core.wsgi:application --bind 0.0.0.0:$PORT
-```
-
-Worker service settings on Railway:
-
-- Root directory: `backend`
-- Build command:
-
-```bash
-pip install -r requirements.txt
-```
-
-- Start command:
-
-```bash
-celery -A core worker -l info
-```
-
-Beat service settings on Railway:
-
-- Root directory: `backend`
-- Build command:
-
-```bash
-pip install -r requirements.txt
-```
-
-- Start command:
-
-```bash
-celery -A core beat -l info
 ```
 
 Frontend service settings on Railway:
@@ -228,7 +195,6 @@ DEBUG=False
 SECRET_KEY=<secure-random-value>
 ALLOWED_HOSTS=<your-backend-domain>
 DATABASE_URL=<railway-postgres-database-url>
-REDIS_URL=<railway-redis-url>
 CORS_ALLOWED_ORIGINS=https://<your-frontend-domain>
 CSRF_TRUSTED_ORIGINS=https://<your-frontend-domain>
 ```
