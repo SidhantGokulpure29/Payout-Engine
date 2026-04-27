@@ -189,6 +189,36 @@ def mark_payout_processing(*, payout_id: UUID, increment_attempt: bool = True) -
         return payout
 
 
+def restart_payout_processing(*, payout_id: UUID) -> Payout:
+    with transaction.atomic():
+        payout = (
+            Payout.objects.select_for_update()
+            .select_related("merchant")
+            .get(id=payout_id)
+        )
+        if payout.status != Payout.Status.PROCESSING:
+            raise PayoutNotProcessableError(
+                "Only processing payouts can be retried."
+            )
+        if payout.processing_started_at is not None:
+            raise PayoutNotProcessableError(
+                "Only stuck payouts marked ready for retry can restart processing."
+            )
+
+        payout.attempt_count += 1
+        payout.processing_started_at = timezone.now()
+        payout.failure_reason = ""
+        payout.save(
+            update_fields=[
+                "attempt_count",
+                "processing_started_at",
+                "failure_reason",
+                "updated_at",
+            ]
+        )
+        return payout
+
+
 def complete_payout(*, payout_id: UUID) -> Payout:
     with transaction.atomic():
         payout = (
@@ -295,25 +325,38 @@ def _settle_processing_payout(payout_id: UUID):
             return
 
 
-def process_payout_inline(*, payout_id: UUID, increment_attempt: bool = True):
+def process_payout_inline(
+    *,
+    payout_id: UUID,
+    increment_attempt: bool = True,
+    retry_existing: bool = False,
+):
     try:
-        mark_payout_processing(
-            payout_id=payout_id,
-            increment_attempt=increment_attempt,
-        )
+        if retry_existing:
+            restart_payout_processing(payout_id=payout_id)
+        else:
+            mark_payout_processing(
+                payout_id=payout_id,
+                increment_attempt=increment_attempt,
+            )
     except (Payout.DoesNotExist, PayoutNotProcessableError):
         return
 
     _settle_processing_payout(payout_id)
 
 
-def _run_background_processing(payout_id: UUID, increment_attempt: bool):
+def _run_background_processing(
+    payout_id: UUID,
+    increment_attempt: bool,
+    retry_existing: bool,
+):
     close_old_connections()
     try:
         time.sleep(BACKGROUND_SETTLEMENT_DELAY_SECONDS)
         process_payout_inline(
             payout_id=payout_id,
             increment_attempt=increment_attempt,
+            retry_existing=retry_existing,
         )
     finally:
         close_old_connections()
@@ -323,10 +366,11 @@ def trigger_background_payout_processing(
     *,
     payout_id: UUID,
     increment_attempt: bool = True,
+    retry_existing: bool = False,
 ):
     thread = threading.Thread(
         target=_run_background_processing,
-        args=(payout_id, increment_attempt),
+        args=(payout_id, increment_attempt, retry_existing),
         daemon=True,
     )
     thread.start()
@@ -358,4 +402,5 @@ def sweep_unprocessed_payouts():
         trigger_background_payout_processing(
             payout_id=payout.id,
             increment_attempt=True,
+            retry_existing=True,
         )

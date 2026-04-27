@@ -1,7 +1,11 @@
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
+import time
+from unittest.mock import patch
 from uuid import uuid4
 
 from django.test import TransactionTestCase
+from django.utils import timezone
 
 from payouts.models import BankAccount, LedgerEntry, Merchant, Payout
 from payouts.services import (
@@ -139,3 +143,32 @@ class PayoutServiceTests(TransactionTestCase):
         payout.refresh_from_db()
 
         self.assertEqual(payout.status, Payout.Status.FAILED)
+
+    @patch("payouts.services.BACKGROUND_SETTLEMENT_DELAY_SECONDS", 0)
+    @patch("payouts.services.choose_settlement_outcome", return_value="success")
+    def test_sweep_unprocessed_payouts_retries_stuck_payout(
+        self,
+        _mock_outcome,
+    ):
+        payout, _ = create_payout_request(
+            merchant_id=self.merchant.id,
+            bank_account_id=self.bank_account.id,
+            amount_paise=2_500,
+            idempotency_key=uuid4(),
+        )
+
+        mark_payout_processing(payout_id=payout.id)
+        payout.refresh_from_db()
+        payout.processing_started_at = timezone.now() - timedelta(seconds=31)
+        payout.save(update_fields=["processing_started_at", "updated_at"])
+
+        sweep_unprocessed_payouts()
+
+        for _ in range(20):
+            payout.refresh_from_db()
+            if payout.status == Payout.Status.COMPLETED:
+                break
+            time.sleep(0.01)
+
+        self.assertEqual(payout.status, Payout.Status.COMPLETED)
+        self.assertEqual(payout.attempt_count, 2)
