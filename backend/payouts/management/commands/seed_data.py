@@ -7,6 +7,7 @@ class Command(BaseCommand):
     help = "Seed merchants, bank accounts, and initial credit ledger entries."
 
     def handle(self, *args, **options):
+        seeded_merchants = []
         merchants = [
             {
                 "name": "Acme Agency",
@@ -49,6 +50,7 @@ class Command(BaseCommand):
                     "name": merchant_data["name"],
                 },
             )
+            seeded_merchants.append(merchant)
             BankAccount.objects.get_or_create(
                 merchant=merchant,
                 account_number=merchant_data["account_number"],
@@ -68,3 +70,6 @@ class Command(BaseCommand):
                 )
 
         self.stdout.write(self.style.SUCCESS("Seed data created successfully."))
+        self.stdout.write("Seeded merchants:")
+        for merchant in seeded_merchants:
+            self.stdout.write(f"- {merchant.name}: {merchant.id}")

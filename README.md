@@ -5,8 +5,13 @@ Minimal payout engine for merchants receiving INR payouts after international co
 ### Stack
 
 - Backend: Django, Django REST Framework, PostgreSQL
-- Background jobs: Celery with Redis
+- Async processing: Celery + Redis for local development, Railway-compatible inline background processing for the deployed demo
 - Frontend: React + Tailwind
+
+### Live Demo
+
+- Frontend: `https://frontend-service-production-e89e.up.railway.app`
+- Backend: `https://splendid-heart-production-8051.up.railway.app`
 
 ### Implemented Backend Features
 
@@ -16,6 +21,7 @@ Minimal payout engine for merchants receiving INR payouts after international co
 - Transaction-safe payout creation with row locking
 - Async payout processor with simulated bank outcomes
 - Retry flow for stuck payouts
+- Railway-friendly deployment path that avoids separate worker/beat services
 - Seed data command
 - Concurrency and idempotency tests
 
@@ -25,6 +31,8 @@ Minimal payout engine for merchants receiving INR payouts after international co
 - `backend/payouts`: payout domain models, services, API, tasks, tests
 
 ### Setup
+
+Local development supports the full Celery + Redis flow. The deployed Railway version uses the same payout domain logic, but processes background work through the web service so the assignment can run on a simpler free-plan footprint.
 
 1. Create and activate a Python virtual environment.
 2. Install backend dependencies:
@@ -82,7 +90,7 @@ venv\Scripts\python.exe backend\manage.py seed_data
 venv\Scripts\python.exe backend\manage.py runserver
 ```
 
-8. Run Celery worker:
+8. Optional: run Celery worker for the full local async flow:
 
 ```bash
 cd backend
@@ -91,7 +99,7 @@ cd backend
 
 `--pool=solo` is recommended on Windows.
 
-9. Run Celery beat:
+9. Optional: run Celery beat for retry scheduling:
 
 ```bash
 cd backend
@@ -158,6 +166,8 @@ Recommended Railway layout:
 - Django web service
 - Frontend web service
 
+The current deployed version intentionally does not require separate Railway worker or beat services. On Railway, payout processing is triggered after payout creation and stuck payouts are swept during dashboard reads, which keeps the deployment small while preserving the core assignment behavior.
+
 Backend service settings on Railway:
 
 - Root directory: `backend`
@@ -212,7 +222,9 @@ After the first backend deploy, seed sample data:
 python manage.py seed_data
 ```
 
-Then copy one merchant UUID from the Railway Django shell or admin into `VITE_MERCHANT_ID` for the frontend.
+The command prints the seeded merchant UUIDs. Copy one of them into `VITE_MERCHANT_ID` for the frontend.
+
+If the frontend is served with `vite preview`, Railway must have a public generated domain and Vite must allow Railway hosts. That configuration is already included in [frontend/vite.config.js](/d:/Notes/All%20Materials/Playto_Pay_Assignment/frontend/vite.config.js).
 
 ### Notes
 
@@ -220,4 +232,5 @@ Then copy one merchant UUID from the Railway Django shell or admin into `VITE_ME
 - Balance is derived from ledger entries, not stored as a mutable field.
 - Concurrency protection relies on `transaction.atomic()` + `select_for_update()`.
 - Background settlement is simulated with success, failure, and hang outcomes.
+- On Railway, background settlement is handled without dedicated worker services to keep the deployment assignment-friendly.
 - Local development uses Docker-backed PostgreSQL and Redis via [docker-compose.yml](/d:/Notes/All%20Materials/Playto_Pay_Assignment/docker-compose.yml).

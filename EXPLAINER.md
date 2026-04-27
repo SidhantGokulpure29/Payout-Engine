@@ -1,3 +1,16 @@
+## Executive Summary
+
+This project is designed around four correctness guarantees:
+
+- no merchant can overdraw available funds during concurrent payout requests
+- retries and duplicate client requests do not create duplicate payouts
+- payout state transitions are explicit and constrained
+- balances are derived from immutable ledger entries rather than mutated counters
+
+The most important engineering choice is that payout creation is treated as a transactional accounting operation, not just an API write. The system locks the merchant row, recomputes available balance from the ledger, creates the payout, and inserts the hold entry in one atomic path. That is what prevents race-condition overdrafts.
+
+For local development, the project supports Celery + Redis. For the live Railway demo, I adapted the background-processing path so the same payout domain logic can run without dedicated worker and beat services. That tradeoff keeps the submission easy to deploy while preserving the concurrency, idempotency, ledger, and state-machine guarantees that matter most.
+
 ## 1. The Ledger
 
 Balance is derived from ledger entries, not stored directly on the merchant row.
@@ -110,9 +123,9 @@ That is what blocks illegal paths like `failed -> completed` or `completed -> pe
 
 ## 5. The AI Audit
 
-One subtle issue I caught was around retrying stuck payouts.
+One specific place where I did not trust the initial AI-shaped implementation was retry accounting for stuck payouts.
 
-A naive AI-generated approach would often do something like:
+A naive version of the retry flow looked like this:
 
 ```python
 for payout in get_stuck_payouts():
@@ -122,14 +135,13 @@ for payout in get_stuck_payouts():
     settle_stuck_payout.apply_async(args=[str(payout.id)], countdown=backoff)
 ```
 
-That looks convenient, but it burns retry attempts before the retry task actually starts. If Celery fails to execute the scheduled retry, the payout can still lose an attempt and reach max-attempt failure too early.
+The bug is subtle: it burns a retry attempt before the retry worker actually starts. If the scheduled task never runs, the payout can still lose attempts and reach the max-attempt failure path too early.
 
-I replaced that with a safer retry flow:
-- keep the payout in `processing`
-- mark it ready for retry without incrementing `attempt_count`
-- increment the attempt only when the retry worker actually starts processing
+I replaced that with a two-step approach:
+- first mark the stuck payout as ready for retry without consuming an attempt
+- increment the attempt only when processing actually restarts
 
-The retry helpers now live in [backend/payouts/services.py](/d:/Notes/All%20Materials/Playto_Pay_Assignment/backend/payouts/services.py) and [backend/payouts/tasks.py](/d:/Notes/All%20Materials/Playto_Pay_Assignment/backend/payouts/tasks.py):
+The corrected helper in [backend/payouts/services.py](/d:/Notes/All%20Materials/Playto_Pay_Assignment/backend/payouts/services.py) is:
 
 ```python
 def mark_stuck_payout_ready_for_retry(*, payout_id: UUID) -> Payout:
@@ -142,16 +154,73 @@ def mark_stuck_payout_ready_for_retry(*, payout_id: UUID) -> Payout:
 
         payout.processing_started_at = None
         payout.failure_reason = ""
-        payout.save(...)
+        payout.save(
+            update_fields=[
+                "processing_started_at",
+                "failure_reason",
+                "updated_at",
+            ]
+        )
         return payout
 ```
 
-And then the retry task starts processing and consumes the attempt:
+And the retry path only consumes the attempt when work actually resumes:
 
 ```python
 def settle_stuck_payout(payout_id: str):
-    mark_payout_processing(payout_id=payout_id, increment_attempt=True)
+    try:
+        mark_payout_processing(payout_id=payout_id, increment_attempt=True)
+    except (Payout.DoesNotExist, PayoutNotProcessableError):
+        return
+
     _settle_processing_payout(payout_id)
 ```
 
-This keeps retries explainable and makes the "max 3 attempts" rule reflect real processing attempts rather than just scheduled retries.
+That change keeps the "max 3 attempts" invariant honest. Attempts now reflect real processing starts, not merely scheduled retries.
+
+## 6. Deployment Adaptation
+
+One practical issue in the final submission was deployment shape.
+
+The original local architecture supports Celery + Redis, and the async tasks still exist in [backend/payouts/tasks.py](/d:/Notes/All%20Materials/Playto_Pay_Assignment/backend/payouts/tasks.py). But for the live Railway deployment, I removed the requirement for separate worker and beat services and reused the same domain logic from the web process.
+
+The deployed request path now does this in [backend/payouts/views.py](/d:/Notes/All%20Materials/Playto_Pay_Assignment/backend/payouts/views.py):
+
+```python
+if created:
+    transaction.on_commit(
+        lambda: trigger_background_payout_processing(payout_id=payout.id)
+    )
+```
+
+And dashboard-style read endpoints call:
+
+```python
+sweep_unprocessed_payouts()
+```
+
+The supporting Railway-compatible helper is in [backend/payouts/services.py](/d:/Notes/All%20Materials/Playto_Pay_Assignment/backend/payouts/services.py):
+
+```python
+def trigger_background_payout_processing(
+    *,
+    payout_id: UUID,
+    increment_attempt: bool = True,
+):
+    thread = threading.Thread(
+        target=_run_background_processing,
+        args=(payout_id, increment_attempt),
+        daemon=True,
+    )
+    thread.start()
+```
+
+Why I kept this version for deployment:
+- the assignment remains easy to run on Railway without provisioning extra always-on services
+- payout creation is still transactional and idempotent
+- simulated async behavior is preserved for the user-facing dashboard
+- stuck payouts still get another chance via the sweep path on later reads
+
+Tradeoff:
+- this is less production-grade than a dedicated queue worker setup because it leans on the web process
+- for the assignment submission, it dramatically simplifies hosting while keeping the concurrency, idempotency, ledger, and payout-state guarantees intact
